@@ -1,0 +1,47 @@
+name: build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.13.0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Fetch pinned VIBE FM SDK if needed
+        run: |
+          if [ ! -f sdk/tools/build.sh ]; then
+            sh scripts/fetch-sdk.sh
+          fi
+
+      - name: Build BAR-FLY
+        run: |
+          cd sdk
+          ZIG=zig sh tools/build.sh ../firmware/bar-fly
+
+      - name: Check protocol
+        run: |
+          node sdk/tools/vibe-check.mjs sdk/build/bar-fly.wasm \
+            --manifest firmware/bar-fly/firmware.json --seconds 10
+
+      - name: Render scripted audio and display
+        run: |
+          mkdir -p sdk/build/bar-fly-test
+          node sdk/tools/wasmtest.mjs sdk/build/bar-fly.wasm \
+            firmware/bar-fly/wasmtest.json sdk/build/bar-fly-test
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: bar-fly
+          path: sdk/build/bar-fly.zip

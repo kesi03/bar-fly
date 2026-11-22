@@ -1,0 +1,50 @@
+BAR-FLY third-party notices
+===========================
+
+Nuked OPL3 (YMF262 emulator), version 1.8
+Copyright (C) 2013-2020 Nuke.YKT
+Source: https://github.com/nukeykt/Nuked-OPL3
+
+Licensed under the GNU Lesser General Public License, version 2.1 or
+(at your option) any later version. The full license text is included in
+LICENSE-Nuked-OPL3.txt in this firmware folder.
+
+Files: opl3.c, opl3.h
+
+Modifications made for the VIBE FM firmware environment:
+  - Removed libc headers (stdio.h, stdlib.h, string.h, math.h); the stereo
+    extension, the only user of math.h, is left disabled.
+  - Replaced memset() in OPL3_Reset() with an explicit zeroing loop.
+  - Changed opl3.h to include <stdint.h> instead of <inttypes.h>, which pulls
+    in libc on the WASM target.
+  - Wrapped the chip with a note-to-channel allocator and register programmer
+    in fm.c; the emulator core itself is otherwise unchanged.
+
+OPL3 instrument bank data
+-------------------------
+
+The Wurlitzer, Cheeze Org, 60's Organ, Percussive Organ and FM5 Grand Piano
+recipes in fm.c are transcribed from instrument records in these collections.
+The Rhodes, Hammond and Stage Piano recipes started from auditioned records in
+them and were subsequently re-voiced using Nuked OPL3 envelope/register
+calibration. The Jazz Room vibraphone and the OPL3 E.PIANO, NORD STAGE and
+SOUL / MOTOWN recipes are original OPL3 register designs; no harpsichord voice
+remains:
+
+  - denjhang/OPLSynth, https://github.com/denjhang/OPLSynth (MIT license)
+    Files used: GENMIDI.wopl, GENMIDI Organ 24.wopl, GENMIDI organ18.wopl,
+    test-2.wopl
+    Records used for the retained WOPL voices:
+      GENMIDI organ18.wopl program 17 "Percussive Organ" (preset 18)
+      GENMIDI Organ 24.wopl program 5 "FM5 Grand Piano" (preset 19)
+  - DMXOPL-DMXOPL3, distributed inside OPLSynth (see its LICENSE file)
+    Source of GENMIDI(GS).wopl bank 2 program 16 "60's Organ 1" (preset 17),
+    and the DMXOPL3-derived instrument experiments in the OPLSynth WOPL files
+    above.
+  - sneakernets/DMXOPL, https://github.com/sneakernets/DMXOPL
+    File used: GENMIDI(XG).wopl, bank 16 program 16 "Cheeze Org" (preset 16).
+
+The WOPL/OP2/OPLI records contain chip register values; only those numeric
+patch fields were transcribed into the firmware.
+
+The BAR-FLY firmware code remains under the license declared in firmware.json.
