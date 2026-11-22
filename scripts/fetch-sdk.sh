@@ -8,6 +8,9 @@ SDK_COMMIT="2ac234088ee5e2da4503f380f3a167d253cc75d4"
 if [ -d "$SDK_DIR/.git" ]; then
     echo "Updating existing SDK checkout in $SDK_DIR"
     git -C "$SDK_DIR" fetch origin
+elif [ -f "$SDK_DIR/tools/build.sh" ]; then
+    echo "Vendored VIBE FM SDK already present in $SDK_DIR; skipping fetch"
+    exit 0
 else
     echo "Cloning $SDK_URL into $SDK_DIR"
     git clone "$SDK_URL" "$SDK_DIR"
