@@ -1,15 +1,18 @@
 /* BAR-FLY -- a lounge electric piano for VIBE FM.
  *
  * Control flow: parameters, presets, keys/pads, display, editor.
- * Audio flow:   real Nuked OPL3 voices -> full EP FX rack -> output.
+ * Audio flow:   real Nuked OPL3 voices + synthesized bossa drums -> EP FX -> output.
  *
  * Sound is immediate: keys and pads play the BAR FLY voice from startup.
- * The six keys right of ENTER are SOUND / ENV / LFO / FX / SPACE / DEMO.
+ * Pads 1-8 play four-note bossa voicings; pads 9-16 launch one of eight
+ * 16-step bossa grooves. The six keys right of ENTER are
+ * SOUND / ENV / LFO / FX / SPACE / DEMO.
  */
 #include "vibe.h"
 #include "vibe_gfx.h"
 #include "vibe_dsp.h"
 #include "fm.h"
+#include "drums.h"
 #include "fx.h"
 
 VIBE_PARALLEL_AUDIO
@@ -36,6 +39,10 @@ enum {
   P_CRUSH_MIX, P_CRUSH_BITS, P_CRUSH_RATE,
   P_VIB_DEPTH, P_VIB_RATE,
   P_MASTER, P_DEMO_RIFF, P_DEMO_BPM,
+  /* Bossa drum machine. Ids are appended: existing ids never change. */
+  P_GROOVE_RUN, P_GROOVE_PATTERN, P_GROOVE_SONG,
+  P_GROOVE_BPM, P_GROOVE_SWING, P_GROOVE_HUMANIZE,
+  P_GROOVE_LEVEL, P_GROOVE_TUNE, P_GROOVE_DECAY,
   P_COUNT
 };
 #define P_COLOR_FIRST P_FLANGER_MIX
@@ -56,6 +63,10 @@ static const char *const SPEEDS[]      = { "STOP", "SLOW", "FAST" };
 static const char *const DELAY_TYPES[] = { "OFF", "PING-PONG", "TAPE" };
 static const char *const REV_TYPES[]   = { "OFF", "ROOM", "HALL", "PLATE", "SPRING" };
 static const char *const WAVES[]       = { "SINE", "TRI", "SQUARE" };
+static const char *const GROOVE_NAMES[BF_DRUM_PATTERNS] = {
+  "BASIC BOSSA", "ANTICIPATED", "LOUNGE BAR", "SYNCOPATED",
+  "JAZZ CLUB", "HOTEL CASIO", "SAMBA", "LOOSE ENDING"
+};
 
 #define PV(i,n,min,max,def,u) { i,n,min,max,def,u,0,0 }
 #define PE(i,n,min,max,def,u,st,ch) { i,n,min,max,def,u,st,ch }
@@ -137,25 +148,72 @@ static const vibe_param PARAMS[P_COUNT] = {
 
   PV("master", "Master", 0.0f, 1.2f, 0.85f, ""),
   PE("demo_riff", "Bossa Snippet", 0, 1, 0, "", 2, ON_OFF),
-  PV("demo_bpm", "Demo Tempo", 60.0f, 180.0f, 112.0f, "bpm")
+  PV("demo_bpm", "Demo Tempo", 60.0f, 180.0f, 112.0f, "bpm"),
+
+  PE("groove_run", "Groove", 0, 1, 0, "", 2, ON_OFF),
+  PE("groove_pattern", "Pattern", 0, BF_DRUM_PATTERNS - 1, 0, "",
+     BF_DRUM_PATTERNS, GROOVE_NAMES),
+  PE("groove_song", "8-Bar Song", 0, 1, 0, "", 2, ON_OFF),
+  PV("groove_bpm", "Groove Tempo", 60.0f, 180.0f, 112.0f, "bpm"),
+  PV("groove_swing", "Swing", 0.0f, 0.7f, 0.56f, ""),
+  PV("groove_humanize", "Humanize", 0.0f, 1.0f, 0.65f, ""),
+  PV("groove_level", "Drum Level", 0.0f, 1.5f, 0.85f, ""),
+  PV("groove_tune", "Drum Tune", 0.5f, 1.8f, 1.0f, ""),
+  PV("groove_decay", "Drum Decay", 0.25f, 2.5f, 1.0f, "")
 };
 #undef PV
 #undef PE
 
+/* Standard-editor mapping: the FX tab collects the whole rack, including the
+ * colour effects; delay and reverb stay together under SPACE. Parameter ids
+ * are unchanged - only the cards they appear on move. */
 static const char *const GROUPS[P_COUNT] = {
-  "A · SOUND","A · SOUND","A · SOUND","A · SOUND","A · SOUND","A · SOUND","A · SOUND","A · SOUND",
-  "B · FM","B · FM","B · FM","B · FM","B · FM","B · FM","B · FM",
-  "C · DYNAMICS","C · DYNAMICS","C · DYNAMICS","C · DYNAMICS",
-  "D · TONE","D · TONE","D · TONE",
-  "E · MOD","E · MOD","E · MOD","E · MOD","E · MOD","E · MOD",
-  "E · MOD","E · MOD","E · MOD","E · MOD","E · MOD",
-  "E · MOD","E · MOD","E · MOD","E · MOD","E · MOD",
-  "F · SPACE","F · SPACE","F · SPACE","F · SPACE",
-  "F · SPACE","F · SPACE","F · SPACE","F · SPACE",
-  "E · MOD","E · MOD","E · MOD","E · MOD","E · MOD",
-  "E · MOD","E · MOD","E · MOD","E · MOD","E · MOD","E · MOD",
-  "E · MOD","E · MOD",
-  "G · SYSTEM","G · SYSTEM","G · SYSTEM"
+  "SOUND · VOICE","SOUND · VOICE","SOUND · VOICE","SOUND · VOICE","SOUND · VOICE","SOUND · VOICE","SOUND · VOICE","SOUND · VOICE",
+  "FM · OPERATORS","FM · OPERATORS","FM · OPERATORS","FM · OPERATORS","FM · OPERATORS","FM · OPERATORS",
+  "FX · DYNAMICS","FX · DYNAMICS","FX · DYNAMICS","FX · DYNAMICS",
+  "TONE · EQ",
+  "TONE · EQ","TONE · EQ","TONE · EQ",
+  "FX · PHASER","FX · PHASER","FX · PHASER",
+  "FX · CHORUS","FX · CHORUS","FX · CHORUS",
+  "FX · TREMOLO","FX · TREMOLO","FX · TREMOLO",
+  "FX · PAN","FX · PAN",
+  "FX · ROTARY","FX · ROTARY","FX · ROTARY","FX · ROTARY","FX · ROTARY",
+  "SPACE · DELAY","SPACE · DELAY","SPACE · DELAY","SPACE · DELAY",
+  "SPACE · REVERB","SPACE · REVERB","SPACE · REVERB","SPACE · REVERB",
+  "FX · FLANGER","FX · FLANGER","FX · FLANGER",
+  "FX · AUTO WAH","FX · AUTO WAH",
+  "FX · RING MOD","FX · RING MOD","FX · RING MOD",
+  "FX · BITCRUSH","FX · BITCRUSH","FX · BITCRUSH",
+  "LFO · VIBRATO","LFO · VIBRATO",
+  "SYSTEM · OUTPUT",
+  "SYSTEM · DEMO","SYSTEM · DEMO",
+  "GROOVE · PATTERN","GROOVE · PATTERN","GROOVE · PATTERN",
+  "GROOVE · PATTERN","GROOVE · PATTERN","GROOVE · PATTERN",
+  "GROOVE · DRUMS","GROOVE · DRUMS","GROOVE · DRUMS"
+};
+
+/* Rack order for the standard editor, so the cards read like the signal flow. */
+static const vibe_card EDITOR_CARDS[] = {
+  { "VOICE",      6, "Preset, level, octave and the four voice values." },
+  { "OPERATORS",  6, "Nuked OPL3 FM recipes and drawbar colour." },
+  { "EQ",         6, "Brightness and the 3-band electric-piano EQ." },
+  { "DYNAMICS",   4, "Tube / solid saturation and the compressor." },
+  { "PHASER",     4, "Four-stage phase sweep." },
+  { "CHORUS",     4, "Two slowly modulated stereo delay taps." },
+  { "TREMOLO",    4, "Amplitude LFO - the Rhodes heartbeat." },
+  { "PAN",        4, "Stereo auto-pan." },
+  { "ROTARY",     6, "Dual-rotor Leslie: motors, Doppler and mic mix." },
+  { "DELAY",      6, "Ping-pong and tape echo." },
+  { "REVERB",     6, "Room, hall, plate and spring." },
+  { "FLANGER",    4, "Short modulated delay with feedback." },
+  { "AUTO WAH",   4, "Envelope-following bandpass sweep." },
+  { "RING MOD",   4, "Sine multiplier sidebands." },
+  { "BITCRUSH",   4, "Sample-and-hold decimation and bit reduction." },
+  { "VIBRATO",    4, "Pitch LFO." },
+  { "OUTPUT",     4, "Master level." },
+  { "DEMO",       6, "Bossa snippet on / off and its tempo." },
+  { "PATTERN",    6, "Eight 16-step bossa grooves: launch, tempo, swing and feel." },
+  { "DRUMS",      6, "Synthesized kick, cross-stick and hat: level and character." }
 };
 
 /* --- factory presets: sparse overrides, applied on top of the safe defaults - */
@@ -388,12 +446,21 @@ static float ui_vals[P_COUNT];           /* control-flow copy */
 static int cur_preset;
 static int applying;
 static int ui_page, help, draw_tick;
+static int groove_flash[BF_DRUM_PATTERNS];  /* pad confirmation LEDs, control flow */
 static char status[192];
 static int status_len, status_pending;
 static float level_l, level_r;           /* audio writes, display reads */
 
+/* groove clock, audio-owned; cur_groove_step is published for the display */
+static double groove_pos;
+static int groove_last_step, groove_bar;
+static int cur_groove_step;
+
 /* device pages: four knobs each */
-enum { UI_SOUND, UI_ENV, UI_FM, UI_TONE, UI_FX, UI_MOD, UI_SPACE, UI_COLOR, UI_SYSTEM, UI_N };
+enum {
+  UI_SOUND, UI_ENV, UI_FM, UI_TONE, UI_FX, UI_MOD, UI_SPACE, UI_COLOR, UI_SYSTEM,
+  UI_GROOVE, UI_GROOVE2, UI_N
+};
 static const int PAGE_PARAM[UI_N][4] = {
   { P_PRESET, P_VOLUME, P_OCTAVE, P_TRANSPOSE },
   { P_VELOCITY, P_ATTACK, P_RELEASE, P_SPREAD },
@@ -403,10 +470,13 @@ static const int PAGE_PARAM[UI_N][4] = {
   { P_TREM_DEPTH, P_CHORUS_MIX, P_PHASER_MIX, P_ROTARY_ON },
   { P_DELAY_TYPE, P_REVERB_TYPE, P_REVERB_MIX, P_REVERB_DECAY },
   { P_FLANGER_MIX, P_WAH_MIX, P_RING_MIX, P_CRUSH_MIX },
-  { P_MASTER, P_VIB_DEPTH, P_VIB_RATE, P_DEMO_RIFF }
+  { P_MASTER, P_VIB_DEPTH, P_VIB_RATE, P_DEMO_RIFF },
+  { P_GROOVE_RUN, P_GROOVE_PATTERN, P_GROOVE_BPM, P_GROOVE_SWING },
+  { P_GROOVE_SONG, P_GROOVE_HUMANIZE, P_GROOVE_LEVEL, P_GROOVE_TUNE }
 };
 static const char *const PAGE_NAME[UI_N] = {
-  "SOUND", "ENV", "FM", "TONE", "FX", "LFO / MOD", "SPACE", "COLOR", "SYSTEM"
+  "SOUND", "ENV", "FM", "TONE", "FX", "LFO / MOD", "SPACE", "COLOR", "SYSTEM",
+  "GROOVE", "GROOVE 2"
 };
 
 static const char *const K_LABELS[6] = {
@@ -610,11 +680,16 @@ static void handle_button(int id)
   if (id == VB_K4) { ui_page = UI_FX; return; }
   if (id == VB_K5) { ui_page = UI_SPACE; return; }
   if (id == VB_K6) {
+    if (ui_page == UI_SYSTEM) { ui_page = UI_GROOVE; return; }
     set_param(P_DEMO_RIFF, q1000(aget(&g_params[P_DEMO_RIFF])) > 0.5f ? 0.0f : 1.0f);
     return;
   }
   if (id == VB_REC) { panic(); return; }
-  if (id == VB_STOP) { set_param(P_DEMO_RIFF, 0.0f); return; }
+  if (id == VB_STOP) {
+    set_param(P_DEMO_RIFF, 0.0f);
+    set_param(P_GROOVE_RUN, 0.0f);
+    return;
+  }
   if (id == VB_PLAY) { set_param(P_DEMO_RIFF, 1.0f); return; }
   if (id == VB_RETURN) { help = 0; ui_page = UI_SOUND; return; }
 }
@@ -630,6 +705,9 @@ static void handle_editor(const uint8_t *b, int n)
   else if (b[0] == 0x25) apply_preset((cur_preset + NPRESET - 1) % NPRESET);
   else if (b[0] == 0x26 && n >= 2) post_note(1, b[1], 100);
   else if (b[0] == 0x27 && n >= 2) post_note(2, b[1], 0);
+  else if (b[0] == 0x40) set_param(P_GROOVE_RUN, ui_vals[P_GROOVE_RUN] > 0.5f ? 0.0f : 1.0f);
+  else if (b[0] == 0x41 && n >= 2) bf_drum_pattern_restore((int)b[1] % BF_DRUM_PATTERNS);
+  else if (b[0] == 0x42) set_param(P_GROOVE_SONG, ui_vals[P_GROOVE_SONG] > 0.5f ? 0.0f : 1.0f);
 }
 
 void vibe_on_event(const vibe_event *e)
@@ -659,9 +737,14 @@ void vibe_on_event(const vibe_event *e)
     int p = (int)e->id, k, nn;
     int oct = (int)ui_vals[P_OCTAVE] * 12;
     if (p < 0 || p >= 16) return;
-    if (p >= 8) {                       /* stabs: one note per upper pad */
-      nn = RIFF[p - 8][0] + 12 + oct;
-      post_note(e->down ? 1 : 2, nn, e->down ? 100 : 0);
+    if (p >= 8) {                       /* pads 9-16 launch bossa grooves */
+      if (e->down) {
+        int g = p - 8;
+        groove_flash[g] = 10;
+        set_param(P_GROOVE_SONG, 0.0f); /* a manual launch leaves song mode */
+        set_param(P_GROOVE_PATTERN, (float)g);
+        set_param(P_GROOVE_RUN, 1.0f);
+      }
       return;
     }
     for (k = 0; k < 4; k++) {           /* chords: the first eight pads */
@@ -718,6 +801,26 @@ static void fill_fm_ctrl(fm_ctrl *c)
   c->vib_rate = aget(&g_params[P_VIB_RATE]);
 }
 
+static void fill_drum_ctrl(bf_drum_ctrl *c)
+{
+  c->gain  = q1000(aget(&g_params[P_GROOVE_LEVEL]));
+  c->tune  = q1000(aget(&g_params[P_GROOVE_TUNE]));
+  c->decay = q1000(aget(&g_params[P_GROOVE_DECAY]));
+  c->tone  = 0.55f;                    /* closed-hat brightness */
+}
+
+/* Per-voice velocities from the feel spec: kick 90-120, rim 60-85, hat 45-90.
+ * A deterministic hash per step/voice keeps the "human" spread reproducible. */
+static int groove_velocity(int voice, unsigned h)
+{
+  h += (unsigned)(voice + 1) * 0x9E3779B9u;
+  h ^= h >> 7; h *= 0x85EBCA6Bu; h ^= h >> 13;
+  if (voice == BF_D_KICK) return 90 + (int)(h % 32);        /* 90-121 */
+  if (voice == BF_D_RIM)  return 60 + (int)((h >> 5) % 26);  /* 60-85  */
+  if (voice == BF_D_HAT)  return 45 + (int)((h >> 9) % 46);  /* 45-90  */
+  return 72 + (int)((h >> 13) % 32);
+}
+
 static void fill_fx_amounts(int *a)
 {
   a[FX_SAT_TYPE]       = aget(&g_params[P_SAT_TYPE]);
@@ -766,13 +869,21 @@ static void fill_fx_amounts(int *a)
   a[FX_MASTER]         = aget(&g_params[P_MASTER]);
 }
 
+static float drum_l[VIBE_MAX_BLOCK], drum_r[VIBE_MAX_BLOCK];
+
 void vibe_on_audio(const float *in, float *out_l, float *out_r, int frames)
 {
   int n = frames, t, type, note, vel;
   fm_ctrl fc;
+  bf_drum_ctrl dc;
   int fxv[FX_COUNT];
   float ml = level_l, mr = level_r;
-  int demo_on, bpm, period, i, k;
+  int demo_on, bpm, period, i, k, tr;
+  int groove_on, gpat, song, gbpm;
+  float swing, hum, step_sec;
+  double steps_per_frame;
+  const vibe_transport_info *tp;
+  int host_play;
   float vol = q1000(aget(&g_params[P_VOLUME]));
   (void)in;
 
@@ -785,13 +896,44 @@ void vibe_on_audio(const float *in, float *out_l, float *out_r, int frames)
     type = q_type[t]; note = q_note[t]; vel = q_vel[t];
     if (type == 1) fm_note_on(note, vel);
     else if (type == 2) fm_note_off(note);
-    else if (type == 3) { fm_all_off(); riff_clock = 0; melody_live = -1; }
+    else if (type == 3) { fm_all_off(); bf_drums_reset(); riff_clock = 0; melody_live = -1; }
     t = (t + 1) % QN;
   }
   q_tail = t;
 
   fill_fm_ctrl(&fc);
+  fill_drum_ctrl(&dc);
   fill_fx_amounts(fxv);
+
+  /* Groove clock: sixteenth steps. A playing DAW leads the tempo and grid;
+   * a stopped host leaves the firmware clock running so the pads stay live. */
+  tp = vibe_transport();
+  host_play = tp && tp->has && tp->playing && tp->bpm > 0.0f;
+  groove_on = aget(&g_params[P_GROOVE_RUN]) > 500;
+  gpat = aget(&g_params[P_GROOVE_PATTERN]) / 1000;
+  song = aget(&g_params[P_GROOVE_SONG]) > 500;
+  gbpm = host_play ? (int)tp->bpm : aget(&g_params[P_GROOVE_BPM]) / 1000;
+  if (gbpm < 40) gbpm = 40;
+  if (gbpm > 240) gbpm = 240;
+  step_sec = 60.0f / (float)gbpm / 4.0f;
+  swing = q1000(aget(&g_params[P_GROOVE_SWING]));
+  hum = q1000(aget(&g_params[P_GROOVE_HUMANIZE]));
+  steps_per_frame = (double)gbpm * 4.0 / (60.0 * (double)sr);
+
+  if (!groove_on) {
+    groove_pos = 0.0;
+    groove_last_step = -1;
+    groove_bar = -1;               /* first step arms the song form's bar 0 */
+    __atomic_store_n(&cur_groove_step, -1, __ATOMIC_RELEASE);
+  } else if (host_play) {
+    double want = tp->beat * 4.0;
+    if (want < 0.0) want = 0.0;
+    if (want - groove_pos > 0.25 || groove_pos - want > 0.25) {
+      groove_pos = want;
+      groove_last_step = -1;
+      groove_bar = 0;
+    }
+  }
 
   demo_on = aget(&g_params[P_DEMO_RIFF]);
   bpm = aget(&g_params[P_DEMO_BPM]) / 1000;
@@ -843,12 +985,48 @@ void vibe_on_audio(const float *in, float *out_l, float *out_r, int frames)
         riff_step = (riff_step + 1) & 255;
       }
     }
+
+    if (groove_on) {
+      int s = (int)groove_pos;
+      double ph = groove_pos - (double)s;
+      int st = ((s % BF_DRUM_STEPS) + BF_DRUM_STEPS) % BF_DRUM_STEPS;
+      double late = 0.008 / (double)step_sec;   /* 8 ms baseline for +/- humanize */
+      unsigned h;
+
+      if (st & 1) late += (double)swing * 0.35; /* laid-back sixteenths */
+      if (hum > 0.0f) {
+        h = (unsigned)s * 2246822519u + 0x9E3779B9u;
+        h ^= h >> 15; h *= 0x2C1B3C6Du; h ^= h >> 12;
+        late += (((double)(h & 255) / 255.0) * 2.0 - 1.0) *
+                0.008 * (double)hum / (double)step_sec;
+      }
+      if (s != groove_last_step) {
+        int bar = ((s / BF_DRUM_STEPS) % 8 + 8) % 8;
+        if (song && bar != groove_bar) {
+          groove_bar = bar;
+          gpat = bf_drum_song_pattern(bar);
+        }
+      }
+      if (s != groove_last_step && ph >= late) {
+        unsigned char mask = bf_drum_step(gpat, st);
+        groove_last_step = s;
+        __atomic_store_n(&cur_groove_step, st, __ATOMIC_RELEASE);
+        h = (unsigned)s * 2654435761u + (unsigned)st + 0x9E3779B9u;
+        for (tr = 0; tr < BF_D_COUNT; tr++)
+          if (mask & (1u << tr))
+            bf_drums_trigger(tr, groove_velocity(tr, h));
+      }
+      groove_pos += steps_per_frame;
+    }
+
     out_l[i] = 0.0f;
     out_r[i] = 0.0f;
   }
 
   fm_render(out_l, out_r, n, &fc);
   for (i = 0; i < n; i++) { out_l[i] *= vol; out_r[i] *= vol; }
+  bf_drums_render(drum_l, drum_r, n, &dc);
+  for (i = 0; i < n; i++) { out_l[i] += drum_l[i]; out_r[i] += drum_r[i]; }
   fx_process(out_l, out_r, n, fxv);
 
   for (i = 0; i < n; i++) {
@@ -893,7 +1071,7 @@ static void draw_fly(float cx, float cy, float flap)
 
 static const char *const HELP[] = {
   "KEYS", "play the electric piano",
-  "PADS", "0-7 chords, 8-15 stabs",
+  "PADS", "1-8 chords, 9-16 bossa grooves",
   "ENC A / F1", "next display page",
   "ENC B / F2", "next factory voice",
   "KNOBS 1-4", "edit the four values shown",
@@ -906,10 +1084,10 @@ static const char *const HELP[] = {
   "K3", "LFO / MOD page",
   "K4", "FX page",
   "K5", "SPACE page",
-  "K6", "bossa snippet on / off",
+  "K6", "bossa snippet / groove page",
   "DATA + ENTER", "FOCUS: walk, press to edit",
   "REC", "panic / all notes off",
-  "STOP / PLAY", "bossa snippet off / on",
+  "STOP / PLAY", "stop all / bossa snippet on",
   "RETURN", "back to SOUND"
 };
 
@@ -927,6 +1105,11 @@ static void build_status(void)
   n = append_txt(status, n, (int)sizeof status, " | ");
   n = append_txt(status, n, (int)sizeof status,
                  aget(&g_params[P_DEMO_RIFF]) ? "bossa on" : "bossa off");
+  n = append_txt(status, n, (int)sizeof status, " | groove ");
+  n = append_txt(status, n, (int)sizeof status,
+                 aget(&g_params[P_GROOVE_RUN])
+                   ? bf_drum_pattern_name((int)(ui_vals[P_GROOVE_PATTERN] + 0.5f))
+                   : "off");
   status_len = n;
   status_pending = 1;
 }
@@ -948,11 +1131,11 @@ void vibe_on_draw(uint16_t *fb)
 
   vf_begin();
   for (i = 0; i < 4; i++) {
-    int y = 62 + i * 49;
+    int y = 58 + i * 47;
     char val[24];
     float t;
     id = PAGE_PARAM[ui_page][i];
-    vg_round(10, y, 460, 44, 5, i & 1 ? C_PANEL : C_PANEL2);
+    vg_round(10, y, 460, 42, 5, i & 1 ? C_PANEL : C_PANEL2);
     vg_text(PARAMS[id].name, 22, y + 4, VG_SMALL, C_MUTED, VG_LEFT);
     if (PARAMS[id].steps > 1) {
       int k = (int)(ui_vals[id] + 0.5f);
@@ -965,10 +1148,24 @@ void vibe_on_draw(uint16_t *fb)
     }
     t = (ui_vals[id] - PARAMS[id].min) / (PARAMS[id].max - PARAMS[id].min);
     if (t < 0.0f) t = 0.0f; else if (t > 1.0f) t = 1.0f;
-    vg_rect(22, y + 32, 420, 5, C_BG);
-    vg_rect(22, y + 32, (int)(420.0f * t), 5, C_ACC);
-    vf_value(id, 10, y, 460, 44, &ui_vals[id], PARAMS[id].min,
+    vg_rect(22, y + 30, 420, 5, C_BG);
+    vg_rect(22, y + 30, (int)(420.0f * t), 5, C_ACC);
+    vf_value(id, 10, y, 460, 42, &ui_vals[id], PARAMS[id].min,
              PARAMS[id].max, (PARAMS[id].max - PARAMS[id].min) / 100.0f);
+  }
+
+  /* 16-step bossa groove grid */
+  {
+    int st = aget(&cur_groove_step);
+    int pat = (int)(ui_vals[P_GROOVE_PATTERN] + 0.5f);
+    if (pat < 0) pat = 0;
+    if (pat >= BF_DRUM_PATTERNS) pat = BF_DRUM_PATTERNS - 1;
+    for (i = 0; i < BF_DRUM_STEPS; i++) {
+      int x = 14 + i * 28;
+      int hit = bf_drum_step(pat, i) != 0;
+      vg_round(x, 247, 24, 10, 2, i == st ? C_ACC : (hit ? C_GOLD : C_PANEL2));
+    }
+    vg_text(bf_drum_pattern_name(pat), 470, 246, VG_SMALL, C_MUTED, VG_RIGHT);
   }
 
   /* level meters and voice count */
@@ -1002,6 +1199,27 @@ void vibe_on_draw(uint16_t *fb)
   }
   vf_end(C_ACC);
 
+  /* pad LEDs: lower pads are chords, upper pads launch the eight grooves */
+  {
+    int pat = (int)(ui_vals[P_GROOVE_PATTERN] + 0.5f);
+    if (pat < 0) pat = 0;
+    if (pat >= BF_DRUM_PATTERNS) pat = BF_DRUM_PATTERNS - 1;
+    for (i = 0; i < 16; i++) {
+      uint32_t c = C_PANEL2;
+      float lvl = 0.0f;
+      if (i >= 8 && groove_flash[i - 8] > 0) {
+        c = C_AVO;
+        lvl = (float)groove_flash[i - 8] / 10.0f;
+        groove_flash[i - 8]--;
+      } else if (i >= 8 && i - 8 == pat) {
+        c = C_AVO;
+        lvl = aget(&g_params[P_GROOVE_RUN]) ? 0.55f : 0.25f;
+      }
+      vibe_led_pad(i, c, lvl);
+    }
+    vibe_led_button(VB_PLAY, aget(&g_params[P_DEMO_RIFF]) ? C_AVO : C_PANEL2, 0.7f);
+  }
+
   for (i = 0; i < 6; i++) vibe_label(VB_F1 + i, F_LABELS[i]);
   for (i = 0; i < 6; i++) vibe_label(VB_K1 + i, K_LABELS[i]);
   vibe_link_page(PAGE_NAME[ui_page]);
@@ -1030,6 +1248,7 @@ void vibe_on_init(float sample_rate)
   int i;
   sr = sample_rate > 1000.0f ? sample_rate : 48000.0f;
   fm_init(sr);
+  bf_drums_init(sr);
   fx_init(sr);
 
   for (i = 0; i < P_COUNT; i++) {
@@ -1038,17 +1257,24 @@ void vibe_on_init(float sample_rate)
   }
   vibe_params(PARAMS, P_COUNT);
   vibe_param_groups(GROUPS);
+  vibe_editor_cards(EDITOR_CARDS, (int)(sizeof(EDITOR_CARDS) / sizeof(EDITOR_CARDS[0])));
   apply_preset(0);
   load_state();
 
   vibe_editor_accent(C_ACC);
-  vibe_editor_tab_color("A", C_ACC);
-  vibe_editor_tab_color("B", C_GOLD);
-  vibe_editor_tab_color("C", C_RED);
-  vibe_editor_tab_color("D", C_AVO);
-  vibe_editor_tab_color("E", 0x5AB6FF);
-  vibe_editor_tab_color("F", 0xB987FF);
-  vibe_editor_tab_color("G", C_CREAM);
+  vibe_editor_tab_color("SOUND", C_ACC);
+  vibe_editor_tab_color("FM", C_GOLD);
+  vibe_editor_tab_color("TONE", C_RED);
+  vibe_editor_tab_color("FX", 0x5AB6FF);
+  vibe_editor_tab_color("SPACE", C_AVO);
+  vibe_editor_tab_color("LFO", 0xB987FF);
+  vibe_editor_tab_color("SYSTEM", C_CREAM);
+  vibe_editor_tab_color("GROOVE", C_AVO);
+
+  vibe_editor_control(P_GROOVE_RUN, VIBE_CTL_TOGGLE);
+  vibe_editor_control(P_GROOVE_SONG, VIBE_CTL_TOGGLE);
+  vibe_editor_control(P_GROOVE_PATTERN, VIBE_CTL_MENU);
+  vibe_editor_control(P_DEMO_RIFF, VIBE_CTL_TOGGLE);
 
   vibe_param_help(P_FM_INDEX, "DX-style modulation index. More means a brighter, harder tine attack.");
   vibe_param_help(P_FM_DECAY, "Time scale of the operator envelopes: low is a quick pluck, high is a long tone.");
@@ -1063,6 +1289,11 @@ void vibe_on_init(float sample_rate)
   vibe_param_help(P_RING_MIX, "Ring modulation: a sine multiplier for bell-like sidebands.");
   vibe_param_help(P_CRUSH_MIX, "Sample-and-hold decimation with reduced bit depth for lo-fi chip colour.");
   vibe_param_help(P_DEMO_RIFF, "Short bossa-nova snippet: bass, syncopated chords and an original top line over an Ipanema-style turnaround.");
+  vibe_param_help(P_GROOVE_RUN, "PLAY runs the selected bossa groove. Pads 9-16 launch one directly; STOP silences everything.");
+  vibe_param_help(P_GROOVE_PATTERN, "Eight 16-step grooves: basic, anticipated, lounge, syncopated, jazz, hotel, samba and loose ending.");
+  vibe_param_help(P_GROOVE_SONG, "8-bar form: 1, 2, 3, 4, 1, 5, 7, 8. Pressing a pad returns to single-groove play.");
+  vibe_param_help(P_GROOVE_SWING, "Laid-back shuffle, 55-58 percent by default: delays the off-beat sixteenths.");
+  vibe_param_help(P_GROOVE_HUMANIZE, "Deterministic timing spread of up to plus/minus 8 ms, for a live-player feel.");
 
   vibe_notes(VIBE_NOTES);
   vibe_keys_octave(2);
@@ -1073,6 +1304,11 @@ void vibe_on_init(float sample_rate)
   q_head = q_tail = 0;
   riff_clock = 0; riff_step = 0; melody_live = -1; melody_left = 0;
   for (i = 0; i < 4; i++) riff_live[i] = -1;
+  for (i = 0; i < BF_DRUM_PATTERNS; i++) groove_flash[i] = 0;
+  groove_pos = 0.0;
+  groove_last_step = -1;
+  groove_bar = 0;
+  __atomic_store_n(&cur_groove_step, -1, __ATOMIC_RELEASE);
   ui_page = UI_SOUND;
   help = 0;
   draw_tick = 0;

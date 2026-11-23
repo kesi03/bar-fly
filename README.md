@@ -2,7 +2,7 @@
 
 A lounge electric piano for [VIBE FM](https://github.com/Vibe-FM-SDK/vibe-fm-sdk): all 24 voices rendered by the real Nuked OPL3 (YMF262) core through a classic electric-piano FX rack, with a bar-fly motif on the device, in the editor and on the menu tile.
 
-It plays immediately — keys and pads make sound from startup, and a short bossa-nova snippet (an Ipanema-style turnaround with an original top line) runs through the same voices and effects.
+It plays immediately — keys and pads make sound from startup, a short bossa-nova snippet (an Ipanema-style turnaround with an original top line) runs through the same voices and effects, and eight original 16-step bossa drum grooves launch from pads 9–16.
 
 ## Sound
 
@@ -24,7 +24,7 @@ The base VIBE layout is used throughout. Every value on the display is reachable
 | Control | Action |
 | --- | --- |
 | Keys / MIDI notes | Play the electric piano |
-| Pads 0–7 / 8–15 | Bossa four-note voicings / single stabs |
+| Pads 1–8 / 9–16 | Bossa four-note voicings / launch one of eight drum grooves |
 | Encoder A / F1 | Next display page |
 | Encoder B / F2 | Next factory voice |
 | Knobs 1–4 | Edit the four values shown above F1–F6 |
@@ -32,12 +32,25 @@ The base VIBE layout is used throughout. Every value on the display is reachable
 | F4 | Next factory voice |
 | F5 / HOME | Controls overview |
 | F6 | Leslie on / off |
-| K1–K6 | SOUND · ENV · LFO · FX · SPACE · DEMO pages |
+| K1–K6 | SOUND · ENV · LFO · FX · SPACE · DEMO pages (K6 again: GROOVE) |
 | REC | Panic / all notes off |
-| STOP / PLAY | Bossa snippet off / on |
+| STOP / PLAY | Stop everything / bossa snippet on |
 | RETURN | Back to SOUND |
 
-Pages are `SOUND`, `ENV`, `FM`, `TONE`, `FX`, `LFO / MOD`, `SPACE`, `COLOR`, `SYSTEM`. The hexagon K-keys carry the shortcuts; the display shows the page names and the values.
+Pages are `SOUND`, `ENV`, `FM`, `TONE`, `FX`, `LFO / MOD`, `SPACE`, `COLOR`, `SYSTEM`, `GROOVE`, `GROOVE 2`. Encoder A / F1 cycles through all of them; K6 reaches DEMO and GROOVE directly. The hexagon K-keys carry the shortcuts; the display shows the page names and the values.
+
+## Bossa drums
+
+Eight 16-step grooves use three synthesized voices — a soft kick, a cross-stick rim and a closed hat — with no samples. They are fully original, adapted from the patterns in the project brief:
+
+| # | Pattern | # | Pattern |
+| --- | --- | --- | --- |
+| 1 | BASIC BOSSA | 5 | JAZZ CLUB |
+| 2 | ANTICIPATED | 6 | HOTEL CASIO |
+| 3 | LOUNGE BAR | 7 | SAMBA |
+| 4 | SYNCOPATED | 8 | LOOSE ENDING |
+
+Each step is a sixteenth note, so the steady hat figures on the even steps read as eighth notes. The feel settings follow the brief: swing defaults to 56 percent, humanize adds a deterministic ±8 ms timing spread, and voices use fixed velocity windows (kick 90–120, rim 60–85, hat 45–90). Optional 8-bar song mode walks the patterns `1 · 2 · 3 · 4 · 1 · 5 · 7 · 8`; pressing a launch pad returns to single-groove play. A playing DAW transport leads the clock; a stopped one leaves the firmware rhythm running. The drums share the EP FX rack, so reverb and delay apply to the whole mix.
 
 ## Build
 
@@ -70,9 +83,13 @@ node sdk/tools/vibe-check.mjs sdk/build/bar-fly.wasm \
 mkdir -p sdk/build/bar-fly-test
 node sdk/tools/wasmtest.mjs sdk/build/bar-fly.wasm \
   firmware/bar-fly/wasmtest.json sdk/build/bar-fly-test
+
+mkdir -p sdk/build/bar-fly-groove-test
+node sdk/tools/wasmtest.mjs sdk/build/bar-fly.wasm \
+  firmware/bar-fly/wasmtest-grooves.json sdk/build/bar-fly-groove-test
 ```
 
-`vibe-check` verifies format, exports, parallel audio, FOCUS, HOME, storage, parameter/editor metadata, NaN safety and real-time limits. `wasmtest` renders audio and display snapshots for the six scenes in `firmware/bar-fly/wasmtest.json`, including the bossa snippet.
+`vibe-check` verifies format, exports, parallel audio, FOCUS, HOME, storage, parameter/editor metadata, NaN safety and real-time limits. `wasmtest` renders audio and display snapshots for the six scenes in `firmware/bar-fly/wasmtest.json`, including the bossa snippet; `wasmtest-grooves.json` presses pads 9–16 and checks all eight drum grooves.
 
 To regenerate the menu icon:
 
@@ -88,11 +105,13 @@ firmware/bar-fly/
   main.c              parameters, presets, events, audio flow, display, editor bridge
   fm.c / fm.h         Nuked OPL3 recipes, allocator and factory patches
   opl3.c / opl3.h     vendored Nuked OPL3 v1.8 core (LGPL-2.1-or-later)
+  drums.c / drums.h   synthesized bossa drums and the eight 16-step grooves
   LICENSE-Nuked-OPL3.txt / NOTICE.txt  required attribution
   fx.c / fx.h         EP FX rack, including the clean dual-rotor Leslie
   editor/index.html   optional custom Editor page (window.vibe only)
   icon.png            960 x 540 bar-fly tile
   wasmtest.json       scripted audio/display test
+  wasmtest-grooves.json  scripted pad 9-16 groove test
 tools/
   make_icon.py        stdlib-only icon generator
   build.ps1           Windows build wrapper

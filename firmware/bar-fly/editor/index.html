@@ -138,6 +138,7 @@
   <span id="status">waking up the lounge…</span>
   <span class="pill" id="preset-pill">MK I RHODES</span>
   <span class="pill" id="riff-pill">demo off</span>
+  <span class="pill" id="groove-pill">groove off</span>
 </div>
 
 <div class="two">
@@ -186,8 +187,19 @@
     <button id="reset">Reset voice</button>
     <button id="panic">Panic</button>
   </div>
-  <p class="note"><b>Keys play the piano.</b> Pads 0–7 play bossa four-note voicings; pads 8–15 play single stabs. No keyboard? The bossa snippet and the buttons below run the same voices through the same effects.</p>
+  <p class="note"><b>Keys play the piano.</b> Pads 1–8 play bossa four-note voicings; pads 9–16 launch the drum grooves below. No keyboard? The bossa snippet and the buttons below run the same voices through the same effects.</p>
   <div class="row" id="play"></div>
+</section>
+
+<section class="panel">
+  <h2>Bossa grooves <small>pads 9-16 · 8 patterns · 16 steps each</small></h2>
+  <div class="presets" id="grooves"></div>
+  <div class="row">
+    <button id="groove-toggle" class="hot">Groove: off</button>
+    <button id="groove-song">8-bar song: off</button>
+    <button id="groove-reset">Restore patterns</button>
+  </div>
+  <p class="note">A soft kick, cross-stick rim and closed hat on a sixteenth grid. Swing defaults to 56 percent; humanize adds a reproducible plus/minus 8 ms spread. The 8-bar song plays <b>1 · 2 · 3 · 4 · 1 · 5 · 7 · 8</b>. Pressing a launch pad returns to single-groove play.</p>
 </section>
 
 <section class="panel">
@@ -214,6 +226,11 @@
     'SOUL / MOTOWN','NEO-SOUL','JAZZ ROOM','HAMMOND KEYS','OPL3 BELL','STAGE PIANO',
     'ELECTRIC ORGAN','VOX CONTINENTAL','FARFISA COMPACT','ACE TONE','CHEEZE ORG',
     '60S ORGAN','PERCUSSIVE ORGAN','FM5 GRAND PIANO'
+  ];
+
+  const GROOVES = [
+    'BASIC BOSSA','ANTICIPATED','LOUNGE BAR','SYNCOPATED',
+    'JAZZ CLUB','HOTEL CASIO','SAMBA','LOOSE ENDING'
   ];
 
   function fmt(p, v) {
@@ -268,6 +285,9 @@
   });
 
   const riff = P('demo_riff');
+  const grooveRun = P('groove_run');
+  const groovePattern = P('groove_pattern');
+  const grooveSong = P('groove_song');
   const rotary = P('rotary_on');
   const speed = P('rotary_speed');
   const tremDepth = P('trem_depth');
@@ -275,6 +295,21 @@
   const tremShape = P('trem_shape');
 
   $('riff').onclick = () => { if (riff) vibe.set(riff.i, vibe.values[riff.i] > .5 ? 0 : 1); };
+
+  GROOVES.forEach((name, i) => {
+    const b = document.createElement('button');
+    b.textContent = (i + 9) + ' · ' + name;
+    b.onclick = () => {
+      if (grooveSong) vibe.set(grooveSong.i, 0);
+      if (groovePattern) vibe.set(groovePattern.i, i);
+      if (grooveRun) vibe.set(grooveRun.i, 1);
+    };
+    $('grooves').append(b);
+  });
+  $('groove-toggle').onclick = () => vibe.send(new Uint8Array([0x40]));
+  $('groove-song').onclick = () => vibe.send(new Uint8Array([0x42]));
+  $('groove-reset').onclick = () => vibe.send(new Uint8Array([0x41, 0]));
+
   $('save').onclick = () => vibe.send(new Uint8Array([0x21]));
   $('reset').onclick = () => { const p = P('preset'); if (p) vibe.set(p.i, 0); };
   $('panic').onclick = () => vibe.send(new Uint8Array([0x23]));
@@ -357,6 +392,14 @@
       const on = values[riff.i] > .5;
       $('riff').textContent = 'Bossa snippet: ' + (on ? 'on' : 'off');
       $('riff-pill').textContent = on ? 'bossa on' : 'bossa off';
+    }
+    if (grooveRun) {
+      const on = values[grooveRun.i] > .5;
+      const gi = groovePattern ? Math.round(values[groovePattern.i]) : 0;
+      $('groove-toggle').textContent = 'Groove: ' + (on ? 'on' : 'off');
+      $('groove-pill').textContent = on ? (GROOVES[gi] || 'groove on') : 'groove off';
+      $('groove-song').textContent = '8-bar song: ' +
+        (grooveSong && values[grooveSong.i] > .5 ? 'on' : 'off');
     }
     $('trem-wave').setAttribute('d', tremPath(values));
     const on = rotary ? values[rotary.i] > .5 : false;
