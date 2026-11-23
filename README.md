@@ -1,5 +1,8 @@
 # BAR-FLY
 
+![alt text](https://github.com/kesi03/bar-fly/raw/main/firmware/bar-fly/icon.png "Bar Fly")
+
+
 A lounge electric piano for [VIBE FM](https://github.com/Vibe-FM-SDK/vibe-fm-sdk): all 24 voices rendered by the real Nuked OPL3 (YMF262) core through a classic electric-piano FX rack, with a bar-fly motif on the device, in the editor and on the menu tile.
 
 It plays immediately — keys and pads make sound from startup, and a short bossa-nova snippet (an Ipanema-style turnaround with an original top line) runs through the same voices and effects.
